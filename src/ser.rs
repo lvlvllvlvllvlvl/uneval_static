@@ -2,7 +2,11 @@
 
 use crate::error::UnevalError;
 use serde::ser;
-use std::io::Write;
+use serde_json::Value;
+use std::{
+    io::{BufWriter, Write},
+    str::FromStr,
+};
 
 pub(crate) type SerResult = Result<(), UnevalError>;
 
@@ -13,6 +17,8 @@ pub(crate) type SerResult = Result<(), UnevalError>;
 pub struct Uneval<W: Write> {
     writer: W,
     inside: bool,
+    key: String,
+    map: phf_codegen::Map<String>,
 }
 
 impl<W: Write> Uneval<W> {
@@ -20,6 +26,8 @@ impl<W: Write> Uneval<W> {
         Self {
             writer: target,
             inside: false,
+            key: "".into(),
+            map: phf_codegen::Map::new(),
         }
     }
 
@@ -126,7 +134,11 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     }
 
     fn serialize_str(self, v: &str) -> SerResult {
-        write!(self.writer, "\"{}\".into()", v.escape_default().collect::<String>())?;
+        write!(
+            self.writer,
+            "\"{}\"",
+            v.escape_default().collect::<String>()
+        )?;
         Ok(())
     }
 
@@ -197,14 +209,12 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        write!(self.writer, "vec![")?;
+        write!(self.writer, "&[")?;
         Ok(self.start_sub())
     }
 
-    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        write!(self.writer, "{{")?;
-        crate::helpers::tuple_converter(&mut self.writer, len)?;
-        write!(self.writer, "convert((")?;
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        write!(self.writer, "(")?;
         Ok(self.start_sub())
     }
 
@@ -229,7 +239,6 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        write!(self.writer, "vec![")?;
         Ok(self.start_sub())
     }
 
@@ -266,7 +275,7 @@ impl<W: Write> ser::SerializeSeq for &mut Uneval<W> {
     }
 
     fn end(self) -> SerResult {
-        write!(self.writer, "].into_iter().collect()")?;
+        write!(self.writer, "]")?;
         self.inside = true;
         Ok(())
     }
@@ -283,7 +292,7 @@ impl<W: Write> ser::SerializeTuple for &mut Uneval<W> {
     }
 
     fn end(self) -> SerResult {
-        write!(self.writer, ")) }}")?;
+        write!(self.writer, ")")?;
         self.inside = true;
         Ok(())
     }
@@ -322,6 +331,7 @@ impl<W: Write> ser::SerializeTupleVariant for &mut Uneval<W> {
         Ok(())
     }
 }
+
 impl<W: Write> ser::SerializeMap for &mut Uneval<W> {
     type Ok = ();
     type Error = UnevalError;
@@ -330,10 +340,18 @@ impl<W: Write> ser::SerializeMap for &mut Uneval<W> {
     where
         T: serde::Serialize,
     {
-        self.comma()?;
-        write!(self.writer, "(")?;
-        key.serialize(&mut **self)?;
-        write!(self.writer, ",")?;
+        let buf = BufWriter::new(Vec::new());
+        let mut s = Uneval::new(buf);
+        key.serialize(&mut s)?;
+        let json = Value::from_str(String::from_utf8(s.writer.into_inner()?)?.as_str())?;
+        if let Value::String(key) = json {
+            self.key = key;
+        } else {
+            // Could probably extend this to any type implementing phf_shared::FmtConst.
+            // Would need to process all keys before creating the map, check they are all
+            // the same type, then build a phf map (or enum_map map) of that type.
+            return Err(UnevalError::Custom("Only string keys are supported".into()));
+        }
         Ok(())
     }
 
@@ -341,13 +359,17 @@ impl<W: Write> ser::SerializeMap for &mut Uneval<W> {
     where
         T: serde::Serialize,
     {
-        value.serialize(&mut **self)?;
-        write!(self.writer, ")")?;
+        let buf = BufWriter::new(Vec::new());
+        let mut s = Uneval::new(buf);
+        value.serialize(&mut s)?;
+        let val = String::from_utf8(s.writer.into_inner()?)?;
+        self.map.entry(self.key.clone(), val.as_str());
         Ok(())
     }
 
     fn end(self) -> SerResult {
-        write!(self.writer, "].into_iter().collect()")?;
+        write!(self.writer, "{}", self.map.build())?;
+        self.map = phf_codegen::Map::new();
         self.inside = true;
         Ok(())
     }

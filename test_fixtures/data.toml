@@ -11,7 +11,7 @@ pub struct Simple {
 }
 """
 value = """
-definition::Simple {
+Simple {
     integer: 123,
     character: 'c',
     float: std::f32::consts::PI,
@@ -34,8 +34,8 @@ pub struct Inner {
 }
 """
 value = """
-definition::Nested {
-    inner: definition::Inner {
+Nested {
+    inner: Inner {
         value: 123
     }
 }
@@ -44,21 +44,21 @@ definition::Nested {
 [complex]
 main_type = "Complex"
 definition = """
-use std::collections::HashMap;
-#[derive(PartialEq, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Complex {
     pub tuple: (i32, f32, String),
     pub vector: Vec<i32>,
     pub byte_arr: Vec<u8>,
-    pub map: HashMap<i128, String>,
+    pub map: std::collections::HashMap<String, String>,
 }
 """
 value = """
 {
     let mut map = std::collections::HashMap::new();
-    map.insert(0, "test".into());
-    map.insert(120, "test longer".into());
-    definition::Complex {
+    map.insert("0".into(), "test".into());
+    map.insert("120".into(), "test longer".into());
+    map.insert("\\"".into(), "test escaping".into());
+    Complex {
         tuple: (1, 1.0, "tuple entry".into()),
         vector: vec![1, 2, 3, 4, 5, -1, -2, -3, -4, -5],
         byte_arr: b"asdfghj".to_vec(),
@@ -66,6 +66,12 @@ value = """
     }
 }
 """
+test_values.tuple = "(1, 1.0, \"tuple entry\".into())"
+test_values.vector = "vec![1, 2, 3, 4, 5, -1, -2, -3, -4, -5]"
+test_values.byte_arr = "b\"asdfghj\".to_vec()"
+test_values."map[\"0\"]" = "\"test\""
+test_values."map[\"120\"]" = "\"test longer\""
+test_values."map[\"\\\"\"]" = "\"test escaping\""
 
 [floats]
 main_type = "Floats"
@@ -74,7 +80,7 @@ definition = """
 pub struct Floats(pub Vec<f32>);
 """
 value = """
-definition::Floats(vec![
+Floats(vec![
     123456789e30,
     123456789e-30,
     12345.6789
@@ -102,7 +108,6 @@ pub struct Container(pub Vec<Enum>);
 """
 value = """
 {
-    use definition::*;
     Container(vec![
         Enum::Unit(Unit),
         Enum::Tuple(1, "test".into()),
@@ -114,42 +119,60 @@ value = """
     ])
 }
 """
+test_values = { 0 = """&[
+        Enum::Unit(Unit),
+        Enum::Tuple(1, "test".into()),
+        Enum::Struct{ key: 1, value: "test".into() },
+        Enum::EmptyTuple(),
+        Enum::EmptyStruct{},
+        // this is intentionally last, to catch an error at previous step
+        Enum::Empty,
+    ]""" }
 
-[array]
+[slice]
 main_type = "Container"
 definition = """
 #[derive(PartialEq, Debug, Serialize)]
-pub struct Container(pub [u8; 2]);
+pub struct Container(pub Vec<u8>);
 """
 value = """
-definition::Container([1, 2])
+Container(vec![1, 2])
 """
 
-[empty_array]
+[tuple]
+main_type = "Container"
+definition = """
+#[derive(PartialEq, Debug, Serialize)]
+pub struct Container(pub (u8, u8));
+"""
+value = """
+Container((1, 2))
+"""
+
+[unit]
 main_type = "ZeroSizeContainer"
 definition = """
 #[derive(PartialEq, Debug, Serialize)]
-pub struct ZeroSizeContainer(pub [u8; 0]);
+pub struct ZeroSizeContainer(pub ());
 """
 value = """
-definition::ZeroSizeContainer([])
+ZeroSizeContainer(())
 """
 
 [empty_fields_issue_3]
 main_type = "Foo"
 support_types = "UnitType,UnitStruct,UnitTuple"
 definition = """
-use std::collections::HashMap;
 #[derive(PartialEq, Debug, Serialize)]
 pub struct UnitType;
 #[derive(PartialEq, Debug, Serialize)]
 pub struct UnitStruct {}
 #[derive(PartialEq, Debug, Serialize)]
 pub struct UnitTuple();
-#[derive(PartialEq, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Foo {
   pub vec: Vec<String>,
-  pub map: HashMap<String, String>,
+  pub map: std::collections::HashMap<String, String>,
   pub unit: (),
   pub unit_type: UnitType,
   pub unit_struct: UnitStruct,
@@ -159,7 +182,6 @@ pub struct Foo {
 """
 value = """
 {
-    use definition::*;
     Foo {
         vec: vec![],
         map: std::collections::HashMap::new(),
@@ -171,6 +193,14 @@ value = """
     }
 }
 """
+test_values.vec = "std::vec::Vec::<&str>::new()"
+test_values."map.len()" = "0"
+test_values.unit = "()"
+test_values.unit_type = "UnitType"
+test_values.unit_struct = "UnitStruct {}"
+test_values.unit_tuple = "UnitTuple()"
+test_values.last = "\"\""
+
 
 [escapist_strings_issue_4]
 main_type = "Foo"
@@ -182,8 +212,9 @@ pub struct Foo {
 }
 """
 value = """
-definition::Foo {
+Foo {
     s: vec!["\\"".into(), "\\n".into(), "'".into(), "❤".into()],
     c: vec!['\\'', '\\n', '"', '❤'],
 }
 """
+test_values = { s = "[\"\\\"\", \"\\n\", \"'\", \"❤\"]", c = "['\\'', '\\n', '\"', '❤']" }

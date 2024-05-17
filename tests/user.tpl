@@ -1,7 +1,7 @@
-mod definition;
-use definition::{{{types}}};
+{definition}
+
+static ITEM: {ser_type} = include!("generated.rs");
 
 fn main() {{
-    let item: {ser_type} = include!("generated.rs");
-    assert_eq!(item, {value});
+    {assert}
 }}

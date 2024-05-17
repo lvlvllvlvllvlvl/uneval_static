@@ -22,7 +22,7 @@ pub fn write(value: impl Serialize, target: impl std::io::Write) -> SerResult {
 ///     std::env::var("OUT_DIR").expect("No build target path set"),
 ///     "file_name.rs".into()
 /// ].iter().collect();
-/// uneval::to_file(value, path).expect("Write failed");
+/// uneval_static::to_file(value, path).expect("Write failed");
 /// ```
 /// 2. [Include][include] the generated Rust code wherever it is needed:
 /// ```ignore

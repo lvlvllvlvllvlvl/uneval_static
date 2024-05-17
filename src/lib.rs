@@ -13,7 +13,7 @@
 //! some code with one of the [functions][funcs] provided by `uneval`,
 //! and then include the generated file, like this:
 //! ```ignore
-//! let value = include!(concat!(env!(OUT_DIR), "/file_name.rs"));
+//! static VALUE: Type = include!(concat!(env!(OUT_DIR), "/file_name.rs"));
 //! ```
 //!
 //! ## How does it work?
@@ -23,7 +23,8 @@
 //! However, in many cases the information provided by Serde is enough.
 //!
 //! For every case, we'll provide an example of how the generated code can look like, as a sequence of
-//! `let` statements, where the left part is written by hand and the right one is assumed to be generated.
+//! assignment statements, representing both the definition of your target struct field and the literal
+//! value that will be assigned to it.
 //!
 //! ### Primitives
 //!
@@ -45,14 +46,11 @@
 //! ```
 //!
 //! ### Strings
-//! When Serde gives us something string-like, we have to make some kind of conversion, since
-//! string literals are of type `&'static str`, and string-like fields in serializable structs are
-//! usually of some owned type, like `String`. We assume that every such type would be convertible to
-//! `String` using [`Into`][std::convert::Into], so we simply emit a string literal with call to `into`.
+//! Strings are output as string literals; your struct field should be of type `&'static str` to hold it.
 //!
 //! Example:
 //! ```
-//! let _: String = "string value".into();
+//! let _: &'static str = "string value";
 //! ```
 //!
 //! Byte strings are handled as byte sequences, [as recommended by Serde itself][::serde::Serializer::serialize_bytes],
@@ -73,139 +71,46 @@
 //!
 //! ### Vec-like types (sequences)
 //!
-//! `Vec`-like structures are constructed using the temporary `Vec`. We assume that every such type will
-//! implement [`FromIterator`][std::iter::FromIterator], so we emit the call to `vec!` macro,
-//! serialize the data and finalize the emit with call to `into_iter().collect()`.
-//! This is not exactly zero-cost, but it seems that this is the minimal.
+//! If the input data contains a variably-typed sequence such as Vec<T>, the target struct should have
+//! a field of type `&'static [T]`.
 //!
 //! Example:
 //! ```
-//! let _: Vec<u32> = vec![1u32, 2u32, 3u32].into_iter().collect();
+//! let _: &'static [u32] = &[1u32, 2u32, 3u32];
 //! ```
 //!
 //! ### Tuples and arrays
 //!
-//! That's where it becomes tricky.
-//!
 //! The problem is that Serde doesn't distinguish between this two kinds of values: they both are treated
-//! as sequences with known length, called "tuples" internally; as a consequence, we don't know at the emit time,
-//! which of them we'll be generating. But in the Rust code, they are created with entirely different syntax,
-//! and there's no easy way to convert one into another. So, we decided to emit a little "runtime"
-//! (consisting of small `#[inline]` functions, so it should in fact be zero-cost), which will
-//! correctly handle the data according to the type being requested.
-//!
-//! The idea is, in fact, directly borrowed from the [`collect`]/[`FromIterator`] pair: we can call `collect`
-//! on every iterator value, and, as long as the target type implements `FromIterator` with the necessary
-//! parameters, `collect` will do its job. We're using not the trait method, but the free function (the reason is
-//! that with the trait we would sometimes have a chain of type inferences, which Rust is unable to solve);
-//! however, this doesn't change the overall picture.
-//!
-//! [`collect`]: std::iter::Iterator::collect
-//! [`FromIterator`]: std::iter::FromIterator
-//!
-//! In general, here's what being generated:
-//! - A `FromTuple<T>` trait with `from_tuple(input: T) -> Self` associated function.
-//! - Two implementations: `impl<T> FromTuple<(T,...,T,)> for [T; N]` and
-//! `impl<T1, ... TN> FromTuple<(T1,...TN,)> for (T1,...TN,)`.
-//! - Function `convert<T1, ... TN, Out: FromTuple<(T1,...TN,)>>(tuple: (T1,...TN,)) -> Out`,
-//! which simply calls `Out::from_tuple(tuple)`.
-//!
-//! Then, the value itself is created by the call to `convert`, with tuple of serialized values as argument.
-//! Depending on whether the target expects the array or tuple, `convert` will select one particular implementation.
-//!
-//! Example:
+//! as sequences with known length, called "tuples" internally. Thus you will need to declare any fixed-length
+//! sequence fields in your target struct as tuples, even if all elements are the same type. If necessary,
+//! a feature flag could be added to convert them all to arrays instead.
 //! ```
-//! let tuple: (i32, f32, String) = {
-//!     trait FromTuple<T>: Sized {
-//!         fn from_tuple(tuple: T) -> Self;
-//!     }
-//!
-//!     impl<T> FromTuple<(T,T,T,)> for [T; 3] {
-//!         #[inline]
-//!         fn from_tuple(tuple: (T,T,T,)) -> Self {
-//!             [tuple.0,tuple.1,tuple.2]
-//!         }
-//!     }
-//!
-//!     impl<T0,T1,T2> FromTuple<(T0,T1,T2,)> for (T0,T1,T2,) {
-//!         #[inline]
-//!         fn from_tuple(tuple: (T0,T1,T2,)) -> Self {
-//!             tuple
-//!         }
-//!     }
-//!
-//!     #[inline]
-//!     fn convert<T0,T1,T2, Out: FromTuple<(T0,T1,T2,)>>(tuple: (T0,T1,T2,)) -> Out {
-//!         Out::from_tuple(tuple)
-//!     }
-//!
-//!     convert((1i32,1f32,"tuple entry".into()))
-//! };
-//! // Check that the tuple is indeed created as desired.
-//! assert_eq!(tuple, (1i32,1f32,"tuple entry".to_string()));
-//!
-//! let arr: [i32; 4] = {
-//!     trait FromTuple<T>: Sized {
-//!         fn from_tuple(tuple: T) -> Self;
-//!     }
-//!
-//!     impl<T> FromTuple<(T,T,T,T,)> for [T; 4] {
-//!         #[inline]
-//!         fn from_tuple(tuple: (T,T,T,T,)) -> Self {
-//!             [tuple.0,tuple.1,tuple.2,tuple.3]
-//!         }
-//!     }
-//!
-//!     impl<T0,T1,T2,T3> FromTuple<(T0,T1,T2,T3,)> for (T0,T1,T2,T3,) {
-//!         #[inline]
-//!         fn from_tuple(tuple: (T0,T1,T2,T3,)) -> Self {
-//!             tuple
-//!         }
-//!     }
-//!
-//!     #[inline]
-//!     fn convert<T0,T1,T2,T3, Out: FromTuple<(T0,T1,T2,T3,)>>(tuple: (T0,T1,T2,T3,)) -> Out {
-//!         Out::from_tuple(tuple)
-//!     }
-//!
-//!     convert((1,2,3,4))
-//! };
-//! // Check that the array is indeed created as desired.
-//! assert_eq!(arr, [1, 2, 3, 4]);
+//! struct SourceStruct([u32; 3]);
+//! struct TargetStruct((u32, u32, u32));
+//! let _ = TargetStruct((1u32, 2u32, 3u32));
 //! ```
 //!
 //! #### Zero-sized arrays
-//! Since the code presented above would work only for non-empty tuples, we have to handle the "empty tuple" case
-//! differently. Fortunately for us, the "real" empty tuple is handled as a unit, so we can directly emit the code
-//! which yields an empty array:
-//! ```
-//! let arr: [i32; 0] = {
-//!     #[inline]
-//!     fn convert<T>(_: ()) -> [T; 0] {
-//!         []
-//!     }
 //!
-//!     convert(())
-//! };
+//! Likewise, arrays of length zero are output as the unit type.
+//! ```
+//! struct SourceStruct([u32; 0]);
+//! struct TargetStruct(());
+//! let _ = TargetStruct(());
 //! ```
 //!
 //! ### Maps
 //!
-//! Since Rust doesn't have the notion of map literals, we can't construct one directly. However, standard map-like
-//! types ([`HashMap`], [`BTreeMap`]) implement `FromIterator<(K, V)>`, i.e. they can be built from the iterator of
-//! key-value pairs. `uneval` generates code according to this convention: we create a `Vec` of pairs, which is then
-//! converted into map with `into_iter().collect()`.
+//! Maps are generated with [phf_codegen]. If your data includes a map you will need to add [phf] to your dependencies.
+//! Currently only string keys are implemented; other primitive types could be added, but that would require a refactor.
 //!
 //! Example:
 //! ```
-//! let _: std::collections::HashMap<i32, String> = vec![
-//!     (1, "first".into()),
-//!     (100, "one hundredth".into()),
-//! ].into_iter().collect();
+//! # type T = ();
+//! # let phf_internals = phf::Map::new()
+//! let _: phf::Map<&'static str, T> = ::phf::Map { ..phf_internals };
 //! ```
-//!
-//! [`HashMap`]: std::collections::HashMap
-//! [`BTreeMap`]: std::collections::BTreeMap
 //!
 //! ### Structs
 //!
@@ -214,11 +119,11 @@
 //!
 //! Example:
 //! ```
-//! struct Struct { boolean: bool, number: i32, string: String }
+//! struct Struct { boolean: bool, number: i32, string: &'static str }
 //! let _: Struct = Struct {
 //!     boolean: true,
 //!     number: 1i32,
-//!     string: "string".into()
+//!     string: "string"
 //! };
 //! ```
 //!
@@ -229,14 +134,8 @@
 //! As a consequence, all of them must have distinct names - otherwise, there will be name clashes.
 //! 2. This serializer is intended for use with derived implementation. It may return bogus results
 //! when used with customized `Serialize`.
-//! 3. It is impossible to consume code for the type with private fields outside from the module it is defined in.
-//! In fact, to be able to use this type with `uneval`, you'll have to distribute two copies of your crate,
-//! one of which would only export the definition with derived `Serialize` to be used by serializer
-//! during the build-time of the second copy. (Isn't this a bit too complex?)
 //!
 //! [include]: https://doc.rust-lang.org/stable/std/macro.include.html
-
-mod helpers;
 
 pub mod error;
 pub mod funcs;

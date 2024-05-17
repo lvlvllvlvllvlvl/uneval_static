@@ -1,14 +1,14 @@
-# uneval
+# uneval_static
 
-Makes [Serde](http://serde.rs) serialize your data to the Rust source code.
+Makes [Serde](http://serde.rs) serialize your data to Rust source code that can be stored in a static variable.
 
 ### Why?
 
-This crate was inspired by the [Stack Overflow question](https://stackoverflow.com/questions/58359340/deserialize-file-using-serde-json-at-compile-time). In short, if you want to make some data in the human-readable format, such as JSON, to be deserialized at compile-time and build into the binary, as if it was written by hand, then this crate can possibly help you.
+The crate that this is forked from, [uneval](https://crates.io/crates/uneval), provides type flexibility by using trait functions such as `.into()` to convert serde types to rust types. However, this means that the output code must incur some runtime cost to initialize itself, which is suboptimal on an emotional level and potentially on a performance level as well. The code output by this crate can fit into a narrower range of types, but does not require a `lazy_static` initializer.
 
 ### How to?
 
-This crate is intended to be used from the build script. It will serialize anything you provide to it to any path you provide (or to the arbitrary [`io::Write`](https://doc.rust-lang.org/stable/std/io/trait.Write.html) implementation, or into `String`, if you want to). Then, you'll [`include!`](https://doc.rust-lang.org/stable/std/macro.include.html) the generated file wherever you want to use it.
+This crate is intended to be used from the build script. It will serialize anything you provide to it to any path you provide (or to the arbitrary [`io::Write`](https://doc.rust-lang.org/stable/std/io/trait.Write.html) implementation, or into `String`, if you want to). Then, you'll [`include!`](https://doc.rust-lang.org/stable/std/macro.include.html) the generated file wherever you want to use it. As your static variable will likely declare any references as `&'static`, you will probably want to use different type definitions in the build script than in your code. Any maps in the static variable should be declared as [phf](https://crates.io/crates/phf)
 
 ### How does it work?
 
@@ -19,37 +19,33 @@ See the [crate documentation](https://docs.rs/uneval) for details. In short, we 
 Well... not. There are several limitations.
 
 1. All the types used in the serialized struct must be in scope on the include site. Serde doesn't provide the qualified name (i.e. path) to the serializer, only the "last" name. The probably easiest way is to use the serialized data as following:
+
 ```rust
-let value: MainType = {
+let static VALUE: MainType = {
     use ::path::to::Type1;
     // ...and other types
     include!("path/to/file.rs")
 }
 ```
-or the similar construction using [`lazy_static`](http://crates.io/crates/lazy_static).
 
 2. As a consequence, all the types used by the serialized one must have distinct names (or they'll clash with each other).
-3. Deserializer isn't implemented. This is intentional, since this crate isn't really intended for runtime usage. Well, in fact, the deserializer *is* implemented - it's just the Rust compiler itself.
+3. Deserializer isn't implemented. This is intentional, since this crate isn't really intended for runtime usage. Well, in fact, the deserializer _is_ implemented - it's just the Rust compiler itself.
 4. This serializer is intended for use with derived implementation. It may return bogus results when used with customized `Serialize`.
-5. It is impossible to serialize the struct with private fields outside from the module it is defined in. In fact, to be able to serialize this type at all, you'll have to distribute two copies of your crate, one of which would only export the definition with derived `Serialize` to be used by this crate during the build-time of the second copy. (Isn't this a bit too complex?)
 
-If you find any other case where this doesn't work, feel free to open an issue - we'll either fix the code or document the newly-found limitation.
+If you find any other case where this doesn't work, feel free to open a pull request.
 
 ### Testing
 
-This crate uses [`batch_run`](https://crates.io/crates/batch_run) to run its tests.
+This crate uses [`trybuild`](https://crates.io/crates/trybuild) to run its tests. Each test case is output to it's own directory in `test_fixtures/`, where `{test_name}/main.rs` is compiled and run first, which creates `{test_name}/generated.rs` to be used in the compilation of `{test_name}/user.rs`, which asserts that the generated values match the inputs.
 
-The common structure of test cases is like following:
-- File named `definition.rs` contains the necessary types.
-- File named `{test_name}-main.rs` includes `definition.rs` as module. It contains the `main` function, which creates an instance of some type from `definition.rs`, generates the corresponding Rust code in `generated.rs` and launches `{test_name}-user.rs` through `batch_run`.
-- File named `{test_name}-user.rs` includes `definition.rs` as module and `generated.rs` through call to `include!`. It checks that the generated code indeed creates the data equal to what was created initially.
+Testing data is defined in [test_fixtures/data.toml], and is in the following format:
 
-Testing data itself is defined in [test_fixtures/data.toml], and is in the following format:
 - Section name in TOML corresponds to the name of test case. Note that this is not the Cargo test, but the item in the `batch_run`'s batch.
 - Field `main_type` corresponds to the type which serialization is being tested.
 - If there are several types (for example, in the nested struct), all other types except for main one should be listed under `support_types` as a comma-separated list. These, together with the `main_type`, will be included in `{test_name}-user.rs` as imports.
 - Field `definition` is literally copied into the `definition.rs`. It's necessary to derive `Debug`, `Serialize` and `PartialEq` on all the types there, since these traits are used during test entry run.
-- Field `value` is literally copied in two places: first, the `{test_name}-main.rs`, where the code is generated; second, in `{test_name}-user.rs`, where test checks two values for equality.
+- Field `value` is literally copied in two places: first, the `{test_name}/main.rs`, where the code is generated; second, in `{test_name}/user.rs`, where test checks two values for equality.
+- Field `test_values` is optional, for cases where `value` cannot easily be used in `user.rs` assertions. Instead of asserting equality on the entire struct, each value in the `test_values` map generates an individual assertion.
 
 # License
 
