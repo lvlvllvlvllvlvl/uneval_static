@@ -3,10 +3,7 @@
 use crate::error::UnevalError;
 use serde::ser;
 use serde_json::Value;
-use std::{
-    io::{BufWriter, Write},
-    str::FromStr,
-};
+use std::io::{BufWriter, Write};
 
 pub(crate) type SerResult = Result<(), UnevalError>;
 
@@ -340,11 +337,7 @@ impl<W: Write> ser::SerializeMap for &mut Uneval<W> {
     where
         T: serde::Serialize,
     {
-        let buf = BufWriter::new(Vec::new());
-        let mut s = Uneval::new(buf);
-        key.serialize(&mut s)?;
-        let json = Value::from_str(String::from_utf8(s.writer.into_inner()?)?.as_str())?;
-        if let Value::String(key) = json {
+        if let Value::String(key) = serde_json::value::to_value(key)? {
             self.key = key;
         } else {
             // Could probably extend this to any type implementing phf_shared::FmtConst.

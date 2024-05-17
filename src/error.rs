@@ -11,7 +11,7 @@ pub enum UnevalError {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("IO error while building phf map: {0}")]
     Inner(#[from] std::io::IntoInnerError<std::io::BufWriter<Vec<u8>>>),
-    #[error("Json error while building phf map: {0}")]
+    #[error("Json error processing map key: {0}")]
     Json(#[from] serde_json::Error),
     #[error("Unknown error: {0}")]
     Custom(String),
