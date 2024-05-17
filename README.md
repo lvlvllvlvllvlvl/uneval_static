@@ -40,10 +40,9 @@ This crate uses [`trybuild`](https://crates.io/crates/trybuild) to run its tests
 
 Testing data is defined in [test_fixtures/data.toml], and is in the following format:
 
-- Section name in TOML corresponds to the name of test case. Note that this is not the Cargo test, but the item in the `batch_run`'s batch.
+- Section name in TOML corresponds to the name of test case. Note that there is only a single test run by cargo, with each of the test cases generated, compiled and run in multiple stages by that cargo test.
 - Field `main_type` corresponds to the type which serialization is being tested.
-- If there are several types (for example, in the nested struct), all other types except for main one should be listed under `support_types` as a comma-separated list. These, together with the `main_type`, will be included in `{test_name}-user.rs` as imports.
-- Field `definition` is literally copied into the `definition.rs`. It's necessary to derive `Debug`, `Serialize` and `PartialEq` on all the types there, since these traits are used during test entry run.
+- Field `definition` is the type definition. This will be included as-is in `{test_name}/main.rs`, and included in `{test_name}/user.rs` after applying simple string replacements to make it compatible with a static declaration. It's necessary to derive `Debug`, `Serialize` and `PartialEq` on all the types there, since these traits are used during test entry run.
 - Field `value` is literally copied in two places: first, the `{test_name}/main.rs`, where the code is generated; second, in `{test_name}/user.rs`, where test checks two values for equality.
 - Field `test_values` is optional, for cases where `value` cannot easily be used in `user.rs` assertions. Instead of asserting equality on the entire struct, each value in the `test_values` map generates an individual assertion.
 

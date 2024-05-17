@@ -108,7 +108,7 @@
 //! Example:
 //! ```
 //! # type T = ();
-//! # let phf_internals = phf::Map::new()
+//! # let phf_internals = phf::Map::new();
 //! let _: phf::Map<&'static str, T> = ::phf::Map { ..phf_internals };
 //! ```
 //!
