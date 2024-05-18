@@ -41,6 +41,24 @@ Nested {
 }
 """
 
+[recursive]
+main_type = "Recursive"
+definition = """
+#[derive(PartialEq, Debug, Serialize)]
+pub struct Recursive {
+    pub inner: Option<Box<Recursive>>,
+}
+"""
+value = """
+Recursive {
+    inner: Some(Box::new(Recursive {
+        inner: None
+    }))
+}
+"""
+name_mappings.Recursive = "&Recursive"
+test_values.inner = "Some(&Recursive { inner: None })"
+
 [complex]
 main_type = "Complex"
 definition = """

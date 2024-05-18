@@ -2,13 +2,62 @@
 
 Makes [Serde](http://serde.rs) serialize your data to Rust source code that can be stored in a static variable.
 
+### How?
+
+generate the data in `build.rs`:
+
+```rust
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Unit(());
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Input {
+    string: String,
+    vector: Vec<i32>,
+    reference: Option<Box<Input>>,
+    map: HashMap<String, Unit>,
+}
+
+fn main() {
+    let input = Input::deserialize(json!({
+        "string": "test",
+        "vector": [1,2,3],
+        "reference": {"string": "", "vector": [], "map": {}},
+        "map": {"key": null},
+    }))
+    .unwrap();
+
+    let path = Path::new(&env::var("OUT_DIR").unwrap()).join("generated.rs");
+    let mut uneval = uneval_static::ser::Uneval::new(File::create(path).unwrap());
+    // Mappings may be required depending on your data structure
+    // Serde provides type names and field names as plain identifiers;
+    // these can be mapped to any output text
+    uneval.add_mapping("Input".into(), "&Output".into());
+    uneval.add_mapping("vector".into(), "slice".into());
+    uneval.serialize(input).unwrap();
+}
+```
+
+then include the generated code in `src/some_mod.rs`:
+
+```rust
+#![allow(clippy::all)]
+
+pub struct Unit(());
+
+pub struct Output {
+    string: &'static str,
+    slice: &'static [i32],
+    reference: Option<&'static Output>,
+    map: phf::Map<&'static str, Unit>,
+}
+
+pub static VALUE: &Output = include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+```
+
 ### Why?
 
 The crate that this is forked from, [uneval](https://crates.io/crates/uneval), provides type flexibility by using trait functions such as `.into()` to convert serde types to rust types. However, this means that the output code must incur some runtime cost to initialize itself, which is suboptimal on an emotional level and potentially on a performance level as well. The code output by this crate can fit into a narrower range of types, but does not require a `lazy_static` initializer.
-
-### How to?
-
-This crate is intended to be used from the build script. It will serialize anything you provide to it to any path you provide (or to the arbitrary [`io::Write`](https://doc.rust-lang.org/stable/std/io/trait.Write.html) implementation, or into `String`, if you want to). Then, you'll [`include!`](https://doc.rust-lang.org/stable/std/macro.include.html) the generated file wherever you want to use it. As your static variable will likely declare any references as `&'static`, you will probably want to use different type definitions in the build script than in your code. Any maps in the static variable should be declared as [phf](https://crates.io/crates/phf)
 
 ### How does it work?
 

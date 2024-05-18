@@ -3,7 +3,10 @@
 use crate::error::UnevalError;
 use serde::ser;
 use serde_json::Value;
-use std::io::{BufWriter, Write};
+use std::{
+    collections::HashMap,
+    io::{BufWriter, Write},
+};
 
 pub(crate) type SerResult = Result<(), UnevalError>;
 
@@ -16,6 +19,7 @@ pub struct Uneval<W: Write> {
     inside: bool,
     key: String,
     map: phf_codegen::Map<String>,
+    name_map: HashMap<String, String>,
 }
 
 impl<W: Write> Uneval<W> {
@@ -25,7 +29,27 @@ impl<W: Write> Uneval<W> {
             inside: false,
             key: "".into(),
             map: phf_codegen::Map::new(),
+            name_map: HashMap::new(),
         }
+    }
+
+    pub fn add_mapping(&mut self, from_name: String, to_name: String) {
+        self.name_map.insert(from_name, to_name);
+    }
+
+    pub fn extend_mappings<T: IntoIterator<Item = (String, String)>>(&mut self, items: T) {
+        self.name_map.extend(items);
+    }
+
+    fn get_mapping(&self, name: &'static str) -> String {
+        self.name_map
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    pub fn serialize(&mut self, value: impl serde::Serialize) -> SerResult {
+        value.serialize(self)
     }
 
     fn start_sub(&mut self) -> &mut Self {
@@ -165,7 +189,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     }
 
     fn serialize_unit_struct(self, name: &'static str) -> SerResult {
-        write!(self.writer, "{}", name)?;
+        write!(self.writer, "{}", self.get_mapping(name))?;
         Ok(())
     }
 
@@ -175,7 +199,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
         _variant_index: u32,
         variant: &'static str,
     ) -> SerResult {
-        write!(self.writer, "{}::{}", name, variant)?;
+        write!(self.writer, "{}::{}", self.get_mapping(name), variant)?;
         Ok(())
     }
 
@@ -183,7 +207,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     where
         T: serde::Serialize,
     {
-        write!(self.writer, "{}(", name)?;
+        write!(self.writer, "{}(", self.get_mapping(name))?;
         value.serialize(&mut *self)?;
         write!(self.writer, ")")?;
         Ok(())
@@ -199,7 +223,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
     where
         T: serde::Serialize,
     {
-        write!(self.writer, "{}::{}(", name, variant)?;
+        write!(self.writer, "{}::{}(", self.get_mapping(name), variant)?;
         value.serialize(&mut *self)?;
         write!(self.writer, ")")?;
         Ok(())
@@ -220,7 +244,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
         name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        write!(self.writer, "{}(", name)?;
+        write!(self.writer, "{}(", self.get_mapping(name))?;
         Ok(self.start_sub())
     }
 
@@ -231,7 +255,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        write!(self.writer, "{}::{}(", name, variant)?;
+        write!(self.writer, "{}::{}(", self.get_mapping(name), variant)?;
         Ok(self.start_sub())
     }
 
@@ -244,7 +268,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
         name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        write!(self.writer, "{} {{", name)?;
+        write!(self.writer, "{} {{", self.get_mapping(name))?;
         Ok(self.start_sub())
     }
 
@@ -255,7 +279,7 @@ impl<W: Write> ser::Serializer for &mut Uneval<W> {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        write!(self.writer, "{}::{} {{", name, variant)?;
+        write!(self.writer, "{}::{} {{", self.get_mapping(name), variant)?;
         Ok(self.start_sub())
     }
 }
@@ -354,6 +378,8 @@ impl<W: Write> ser::SerializeMap for &mut Uneval<W> {
     {
         let buf = BufWriter::new(Vec::new());
         let mut s = Uneval::new(buf);
+        s.name_map
+            .extend(self.name_map.iter().map(|(k, v)| (k.into(), v.into())));
         value.serialize(&mut s)?;
         let val = String::from_utf8(s.writer.into_inner()?)?;
         self.map.entry(self.key.clone(), val.as_str());
@@ -380,7 +406,7 @@ impl<W: Write> ser::SerializeStruct for &mut Uneval<W> {
         T: serde::Serialize,
     {
         self.comma()?;
-        write!(self.writer, "{}: ", key)?;
+        write!(self.writer, "{}: ", self.get_mapping(key))?;
         value.serialize(&mut **self)?;
         Ok(())
     }
@@ -404,7 +430,7 @@ impl<W: Write> ser::SerializeStructVariant for &mut Uneval<W> {
         T: serde::Serialize,
     {
         self.comma()?;
-        write!(self.writer, "{}: ", key)?;
+        write!(self.writer, "{}: ", self.get_mapping(key))?;
         value.serialize(&mut **self)?;
         Ok(())
     }

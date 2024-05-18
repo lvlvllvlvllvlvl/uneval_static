@@ -1,8 +1,10 @@
 use serde::Serialize;
-use uneval_static::to_file;
+use std::fs::File;
 
 {definition}
 
 fn main() {{
-    to_file({value}, "{path}/generated.rs").unwrap();
+    let mut uneval = uneval_static::ser::Uneval::new(File::create("{path}/generated.rs").unwrap());
+    {name_mappings}
+    uneval.serialize({value}).unwrap();
 }}
